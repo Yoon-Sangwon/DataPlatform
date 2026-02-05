@@ -1,0 +1,916 @@
+# 기업 데이터 플랫폼 DB 구조 및 샘플 데이터 전체 명세
+
+## 개요
+기업 데이터 플랫폼을 위한 완전한 데이터베이스 구조와 샘플 데이터입니다. 32개의 데이터 자산, 권한 관리 시스템, 데이터 리니지, 커뮤니티 댓글 등을 포함합니다.
+
+---
+
+## 1. 핵심 메타데이터 테이블 (10개)
+
+### 1.1 services (서비스 정보)
+```sql
+CREATE TABLE services (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL UNIQUE,
+  description text DEFAULT '',
+  icon text DEFAULT 'server',
+  color text DEFAULT 'blue',
+  created_at timestamptz DEFAULT now()
+);
+```
+
+**샘플 데이터:**
+- 데이터플랫폼: 전사 데이터 인프라 및 분석 플랫폼 (icon: database, color: blue)
+- 채용솔루션: 채용 프로세스 관리 솔루션 (icon: users, color: emerald)
+- 엔지니어링솔루션: 개발 및 DevOps 도구 플랫폼 (icon: code, color: orange)
+
+### 1.2 data_assets (데이터 자산)
+```sql
+CREATE TABLE data_assets (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  service_id uuid REFERENCES services(id) ON DELETE SET NULL,
+  name text NOT NULL,
+  description text DEFAULT '',
+  schema_name text NOT NULL,
+  database_name text NOT NULL,
+  owner_id uuid,
+  owner_name text DEFAULT '',
+  owner_email text DEFAULT '',
+  tags text[] DEFAULT '{}',
+  business_definition text DEFAULT '',
+  doc_links jsonb DEFAULT '[]',
+  sensitivity_level text DEFAULT 'internal',
+  requires_permission boolean DEFAULT false,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+```
+
+### 1.3 asset_columns (컬럼 메타데이터)
+```sql
+CREATE TABLE asset_columns (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  asset_id uuid NOT NULL REFERENCES data_assets(id) ON DELETE CASCADE,
+  column_name text NOT NULL,
+  data_type text NOT NULL,
+  description text DEFAULT '',
+  is_nullable boolean DEFAULT true,
+  dq_null_ratio numeric DEFAULT 0,
+  dq_freshness text DEFAULT 'good',
+  is_masked boolean DEFAULT false,
+  masking_type text DEFAULT NULL,
+  ordinal_position integer DEFAULT 0
+);
+```
+
+### 1.4 data_lineage (데이터 계보)
+```sql
+CREATE TABLE data_lineage (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_asset_id uuid REFERENCES data_assets(id) ON DELETE SET NULL,
+  target_asset_id uuid REFERENCES data_assets(id) ON DELETE SET NULL,
+  transformation_type text DEFAULT 'ETL',
+  etl_logic_summary text DEFAULT '',
+  source_name text DEFAULT '',
+  target_name text DEFAULT '',
+  source_type text DEFAULT 'table',
+  target_type text DEFAULT 'table'
+);
+```
+
+### 1.5 asset_comments (커뮤니티 댓글)
+```sql
+CREATE TABLE asset_comments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  asset_id uuid NOT NULL REFERENCES data_assets(id) ON DELETE CASCADE,
+  user_id uuid,
+  user_name text DEFAULT '',
+  content text NOT NULL,
+  parent_id uuid REFERENCES asset_comments(id) ON DELETE CASCADE,
+  is_answer boolean DEFAULT false,
+  created_at timestamptz DEFAULT now()
+);
+```
+
+### 1.6 permission_requests (권한 요청)
+```sql
+CREATE TABLE permission_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  asset_id uuid NOT NULL REFERENCES data_assets(id) ON DELETE CASCADE,
+  requester_id uuid NOT NULL,
+  requester_name text DEFAULT '',
+  requester_email text DEFAULT '',
+  requested_level text DEFAULT 'viewer',
+  purpose_category text DEFAULT 'analysis',
+  reason text DEFAULT '',
+  duration text DEFAULT '3months',
+  status text DEFAULT 'pending',
+  reviewed_at timestamptz,
+  reviewer_name text DEFAULT '',
+  reviewer_comment text DEFAULT '',
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now(),
+  CONSTRAINT valid_requested_level CHECK (requested_level IN ('viewer', 'developer', 'owner')),
+  CONSTRAINT valid_status CHECK (status IN ('pending', 'approved', 'rejected'))
+);
+```
+
+### 1.7 asset_permissions (실제 권한)
+```sql
+CREATE TABLE asset_permissions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  asset_id uuid NOT NULL REFERENCES data_assets(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL,
+  user_email text DEFAULT '',
+  permission_level text DEFAULT 'viewer',
+  granted_by_name text DEFAULT '',
+  expires_at timestamptz,
+  revoked_at timestamptz,
+  created_at timestamptz DEFAULT now(),
+  CONSTRAINT valid_permission_level CHECK (permission_level IN ('viewer', 'developer', 'owner'))
+);
+```
+
+### 1.8 service_requests (서비스 요청)
+```sql
+CREATE TABLE service_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  requester_id uuid NOT NULL,
+  requester_name text DEFAULT '',
+  title text NOT NULL,
+  description text DEFAULT '',
+  category text DEFAULT 'data_access',
+  priority text DEFAULT 'medium',
+  status text DEFAULT 'open',
+  assignee_name text DEFAULT '',
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+```
+
+### 1.9 pipelines (파이프라인)
+```sql
+CREATE TABLE pipelines (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  description text DEFAULT '',
+  owner_id uuid,
+  owner_name text DEFAULT '',
+  schedule text DEFAULT '',
+  schedule_readable text DEFAULT '',
+  status text DEFAULT 'success',
+  last_run timestamptz,
+  airflow_dag_id text DEFAULT '',
+  created_at timestamptz DEFAULT now()
+);
+```
+
+### 1.10 notifications (알림)
+```sql
+CREATE TABLE notifications (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  type text NOT NULL,
+  title text NOT NULL,
+  message text DEFAULT '',
+  link text DEFAULT '',
+  is_read boolean DEFAULT false,
+  created_at timestamptz DEFAULT now()
+);
+```
+
+---
+
+## 2. 데이터 자산 상세 (32개 테이블)
+
+### 2.1 analytics_db.hr (HR 분석 데이터 - 4개 테이블)
+
+#### employees (직원 정보)
+- **설명**: 조직 내 모든 직원의 기본 정보를 저장하는 핵심 마스터 테이블
+- **민감도**: confidential, requires_permission: true
+- **태그**: HR, PII, 개인정보, 인사
+- **소유자**: HR System
+- **비즈니스 정의**: 조직 내 모든 직원의 기본 정보를 저장하는 핵심 마스터 테이블입니다. 인사관리, 조직도 구성, 권한 관리 등 다양한 시스템에서 참조됩니다. 민감한 개인정보가 포함되어 있으므로 접근 권한 관리가 필요합니다.
+- **문서 링크**:
+  - 직원 마스터 데이터 가이드: https://wiki.company.com/hr/employee-master
+  - 조직 API 문서: https://docs.company.com/api/hr/employees
+  - 개인정보 처리 방침: https://confluence.company.com/pages/privacy-policy
+
+**컬럼 (7개):**
+1. employee_id (INTEGER) - 직원 고유 식별자
+2. full_name (VARCHAR(100)) - 직원 성명 [마스킹: partial]
+3. email (VARCHAR(255)) - 회사 이메일 주소 [마스킹: partial]
+4. department_id (INTEGER) - 소속 부서 외래키
+5. hire_date (DATE) - 입사일
+6. job_title (VARCHAR(100)) - 직책
+7. manager_id (INTEGER) - 직속 상사 ID (자기참조, null_ratio: 15%)
+
+**커뮤니티 댓글 예시:**
+- "이 테이블을 사용할 때 manager_id가 NULL인 경우는 최고경영진입니다. 조직도 구성 시 참고하세요." - 김민수
+- "직원 정보 조회 시 개인정보 마스킹이 적용되어 있습니다. 전체 정보가 필요하면 HR팀에 별도 요청하세요." - 이서연
+
+#### salaries (급여 정보)
+- **설명**: 직원 급여 이력을 관리하는 테이블
+- **민감도**: confidential, requires_permission: true
+- **태그**: HR, 급여, 기밀, 인사
+- **소유자**: HR System
+- **비즈니스 정의**: 직원 급여 이력을 관리하는 테이블입니다. 기본급, 성과급, 급여 적용일 등을 추적합니다. 인건비 분석, 급여 인상률 산정, 예산 계획에 활용됩니다. 최고 수준의 접근 제한이 적용됩니다.
+
+**컬럼 (5개):**
+1. salary_id (INTEGER) - 급여 기록 고유 식별자
+2. employee_id (INTEGER) - 직원 외래키
+3. base_salary (DECIMAL(12,2)) - 기본 연봉 [마스킹: hash]
+4. bonus (DECIMAL(12,2)) - 성과급 [마스킹: hash, null_ratio: 20%]
+5. effective_date (DATE) - 급여 적용 시작일
+
+#### performance_reviews (성과 평가)
+- **설명**: 분기별/연간 성과 평가 데이터
+- **민감도**: confidential, requires_permission: true
+- **태그**: HR, 평가, 기밀, 인사
+- **소유자**: HR System
+
+**컬럼 (6개):**
+1. review_id (INTEGER) - 성과 평가 고유 식별자
+2. employee_id (INTEGER) - 평가 대상 직원 ID
+3. reviewer_id (INTEGER) - 평가자 ID
+4. review_period (VARCHAR(20)) - 평가 기간 (예: 2024-Q1)
+5. rating (DECIMAL(3,2)) - 성과 점수 (1.00 ~ 5.00) [마스킹: full]
+6. feedback (TEXT) - 상세 피드백 내용 [마스킹: full, null_ratio: 10%]
+
+#### benefits (복리후생)
+- **설명**: 직원 복리후생 정보
+- **민감도**: confidential, requires_permission: true
+- **태그**: HR, 복리후생, 기밀, 인사
+- **소유자**: HR System
+
+**컬럼 (6개):**
+1. benefit_id (INTEGER) - 복리후생 고유 식별자
+2. employee_id (INTEGER) - 직원 외래키
+3. benefit_type (VARCHAR(50)) - 복리후생 유형 (건강보험, 연금, 휴가 등)
+4. coverage_amount (DECIMAL(12,2)) - 보장 금액 [마스킹: partial, null_ratio: 5%]
+5. start_date (DATE) - 복리후생 시작일
+6. end_date (DATE) - 복리후생 종료일 (NULL이면 현재 진행중, null_ratio: 25%)
+
+---
+
+### 2.2 analytics_db.logs (로그 데이터 - 4개 테이블)
+
+#### api_logs (API 호출 로그)
+- **설명**: API 호출 로그를 기록하는 테이블
+- **민감도**: internal
+- **태그**: log, api, system
+- **소유자**: DevOps팀 강동현
+
+**컬럼:** endpoint, method, status_code, response_time_ms, user_id, created_at
+
+#### application_logs (애플리케이션 로그)
+- **설명**: 애플리케이션 런타임 로그
+- **민감도**: internal
+- **태그**: log, application, system
+- **소유자**: DevOps팀 강동현
+
+**컬럼:** log_level, message, error_stack, service_name, created_at
+
+#### security_logs (보안 이벤트 로그)
+- **설명**: 보안 이벤트 로그를 저장
+- **민감도**: confidential
+- **태그**: log, security, audit
+- **소유자**: Security팀 윤서준
+
+**컬럼:** event_type, user_id, ip_address, success, metadata, created_at
+
+#### payment_logs (결제 트랜잭션 로그)
+- **설명**: 모든 결제 트랜잭션의 상세 로그
+- **민감도**: confidential
+- **태그**: log, payment, transaction, 결제
+- **소유자**: Finance팀 한지민
+
+**컬럼:** transaction_id, pg_name, amount, status, error_code, created_at
+
+---
+
+### 2.3 analytics_db.public (공개 분석 데이터 - 5개 테이블)
+
+#### users (사용자 정보)
+- **설명**: 서비스 사용자(고객) 정보를 저장하는 마스터 테이블
+- **민감도**: internal
+- **태그**: user, analytics, 사용자
+- **소유자**: Analytics팀 이지은
+
+**컬럼:** user_id, email, signup_date, last_login, status, user_type
+
+**커뮤니티 댓글:**
+- "탈퇴 회원도 soft delete로 남아있습니다. is_active 컬럼으로 활성 회원만 필터링하세요." - 김민수
+
+#### user_events (사용자 행동 이벤트 로그)
+- **설명**: 사용자의 모든 행동을 추적하는 이벤트 로그
+- **민감도**: public
+- **태그**: event, analytics, 행동로그
+- **소유자**: Analytics팀 이지은
+
+**컬럼:** event_id, user_id, event_type, page_url, properties, is_bot, created_at
+
+**커뮤니티 댓글:**
+- "이벤트 데이터는 30일 후 콜드 스토리지로 이동됩니다. 장기 분석은 집계 테이블 사용하세요." - 박준혁
+- "봇 트래픽 필터링 필요 시 is_bot=false 조건을 추가하세요. 약 15%가 봇 트래픽입니다." - 최유진
+
+#### orders (주문 정보)
+- **설명**: 고객 주문 정보를 저장하는 핵심 트랜잭션 테이블
+- **민감도**: internal
+- **태그**: order, transaction, 주문
+- **소유자**: Sales팀 박준호
+
+**컬럼:** order_id, user_id, total_amount, status, shipping_address, created_at
+
+**커뮤니티 댓글:**
+- "주문 상태 코드 정리: pending(대기), confirmed(확정), shipped(배송중), delivered(배송완료), cancelled(취소)" - 임태호
+- "취소된 주문도 포함되어 있으니 매출 분석 시 cancelled 상태는 반드시 제외해야 합니다!" - 한소희
+
+#### products (제품 카탈로그)
+- **설명**: 판매 상품 마스터 테이블
+- **민감도**: public
+- **태그**: product, catalog, 제품
+- **소유자**: Product팀 최서연
+
+**컬럼:** product_id, name, price, category_id, stock_quantity, is_available
+
+**커뮤니티 댓글:**
+- "품절 상품은 is_available=false입니다. 판매 가능 상품만 조회하려면 이 조건을 추가하세요." - 박준혁
+
+#### reviews (상품 리뷰)
+- **설명**: 고객이 작성한 상품 리뷰 및 평점 정보
+- **민감도**: public
+- **태그**: review, feedback, 리뷰
+- **소유자**: Product팀 최서연
+
+**컬럼:** review_id, product_id, user_id, rating, content, created_at
+
+---
+
+### 2.4 devops_db.ci_cd (CI/CD 데이터 - 2개 테이블)
+
+#### build_logs (빌드 로그)
+- **설명**: CI/CD 파이프라인 빌드 로그
+- **민감도**: internal
+- **태그**: devops, ci_cd, build
+- **소유자**: DevOps팀 강동현
+
+**컬럼 (7개):**
+1. build_id (INTEGER) - 빌드 고유 식별자
+2. pipeline_name (VARCHAR(100)) - 파이프라인 이름
+3. branch (VARCHAR(100)) - Git 브랜치명
+4. commit_hash (VARCHAR(40)) - Git 커밋 해시
+5. status (VARCHAR(20)) - 빌드 상태 (success, failed, running)
+6. duration_seconds (INTEGER) - 빌드 소요 시간 (초, null_ratio: 5%)
+7. created_at (TIMESTAMP) - 빌드 시작 시간
+
+**커뮤니티 댓글:**
+- "빌드 시간이 10분 이상 걸리는 경우 최적화가 필요합니다. DevOps팀에 문의하세요." - 윤지영
+- "빌드 실패 원인 분석 시 error_message 컬럼에 상세 로그가 있습니다. 대부분 의존성 문제입니다." - 임태호
+
+#### deployments (배포 이력)
+- **설명**: 애플리케이션 배포 이력
+- **민감도**: internal
+- **태그**: devops, deployment, release
+- **소유자**: DevOps팀 강동현
+
+**컬럼:** deployment_id, build_id, environment, version, deployed_by, is_rollback, rollback_reason, created_at
+
+**커뮤니티 댓글:**
+- "롤백 이력을 확인하려면 is_rollback 컬럼을 확인하세요. 롤백 원인은 rollback_reason에 있습니다." - 정다은
+
+---
+
+### 2.5 devops_db.monitoring (모니터링 데이터 - 3개 테이블)
+
+#### alerts (알림)
+- **설명**: 시스템 모니터링 알림
+- **민감도**: internal
+- **태그**: monitoring, alert, system
+- **소유자**: DevOps팀 강동현
+
+**컬럼 (6개):**
+1. alert_id (INTEGER) - 알림 고유 식별자
+2. service_name (VARCHAR(100)) - 서비스 이름
+3. severity (VARCHAR(20)) - 심각도 (critical, warning, info)
+4. message (TEXT) - 알림 메시지 내용
+5. triggered_at (TIMESTAMP) - 알림 발생 시간
+6. resolved_at (TIMESTAMP) - 알림 해제 시간 (null_ratio: 30%)
+
+**커뮤니티 댓글:**
+- "severity가 critical인 알림은 즉시 대응이 필요합니다. Slack 온콜 채널에 자동 전송됩니다." - 한소희
+- "resolved_at이 NULL이면 아직 해결되지 않은 알림입니다. 미해결 알림 모니터링에 활용하세요." - 송민재
+
+#### incident_reports (장애 보고서)
+- **설명**: 장애 보고서(포스트모템)
+- **민감도**: internal
+- **태그**: monitoring, incident, postmortem
+- **소유자**: DevOps팀 강동현
+
+**컬럼 (7개):**
+1. incident_id (INTEGER) - 장애 보고서 고유 식별자
+2. title (VARCHAR(200)) - 장애 제목
+3. description (TEXT) - 장애 상세 설명
+4. severity_level (VARCHAR(10)) - 심각도 레벨 (P1~P4)
+5. root_cause (TEXT) - 근본 원인 분석 (RCA, null_ratio: 15%)
+6. resolution (TEXT) - 해결 방법 및 조치 사항 (null_ratio: 10%)
+7. created_at (TIMESTAMP) - 보고서 작성 시간
+
+**커뮤니티 댓글:**
+- "포스트모템 작성 시 root_cause 분석이 핵심입니다. 5 Why 기법을 활용하면 좋습니다." - 김민수
+- "장애 등급 기준 - P1: 서비스 전체 중단, P2: 핵심 기능 장애, P3: 일부 기능 영향, P4: 경미한 이슈" - 이서연
+
+#### service_metrics (서비스 성능 메트릭)
+- **설명**: 서비스 성능 메트릭을 수집
+- **민감도**: internal
+- **태그**: monitoring, metrics, performance
+- **소유자**: DevOps팀 강동현
+
+**컬럼:** metric_id, service_name, metric_type, value, unit, created_at
+
+---
+
+### 2.6 hr_db.analytics (HR 분석 - 2개 테이블)
+
+#### hiring_metrics (채용 지표)
+- **설명**: 채용 활동 지표를 집계한 분석 테이블
+- **민감도**: internal
+- **태그**: hr, recruitment, analytics
+- **소유자**: HR팀 이민지
+
+**컬럼 (6개):**
+1. metric_id (INTEGER) - 채용 지표 고유 식별자
+2. period (VARCHAR(20)) - 집계 기간 (예: 2024-01)
+3. department_id (INTEGER) - 부서 외래키
+4. applications_count (INTEGER) - 지원서 수
+5. hires_count (INTEGER) - 채용 완료 수
+6. time_to_hire_days (DECIMAL(5,1)) - 평균 채용 소요 일수 (null_ratio: 5%)
+
+#### recruitment_funnel (채용 퍼널)
+- **설명**: 채용 퍼널 단계별 현황 추적
+- **민감도**: internal
+- **태그**: hr, recruitment, funnel
+- **소유자**: HR팀 이민지
+
+**컬럼 (5개):**
+1. funnel_id (INTEGER) - 채용 퍼널 고유 식별자
+2. job_posting_id (INTEGER) - 채용 공고 외래키
+3. stage (VARCHAR(50)) - 채용 단계 (서류심사, 1차면접, 2차면접, 최종합격)
+4. candidate_count (INTEGER) - 해당 단계 지원자 수
+5. conversion_rate (DECIMAL(5,2)) - 다음 단계 전환율 (%, null_ratio: 10%)
+
+---
+
+### 2.7 hr_db.recruitment (채용 프로세스 - 3개 테이블)
+
+#### applicants (지원자)
+- **설명**: 채용 지원자 정보
+- **민감도**: confidential
+- **태그**: hr, recruitment, pii
+- **소유자**: HR팀 이민지
+
+**컬럼:** applicant_id, name, email, phone, resume_url, source_channel, status, applied_at
+
+**커뮤니티 댓글:**
+- "지원자 소싱 채널은 source_channel 컬럼에서 확인 가능합니다. 채용 마케팅 효과 분석에 활용하세요." - 박준혁
+- "중복 지원자 처리 로직이 있어서 같은 이메일로 재지원 시 기존 레코드가 업데이트됩니다." - 최유진
+
+#### interviews (면접)
+- **설명**: 면접 일정 및 결과
+- **민감도**: confidential
+- **태그**: hr, recruitment, interview
+- **소유자**: HR팀 이민지
+
+**컬럼 (7개):**
+1. interview_id (INTEGER) - 면접 고유 식별자
+2. applicant_id (INTEGER) - 지원자 외래키
+3. interviewer_id (INTEGER) - 면접관 ID
+4. interview_type (VARCHAR(50)) - 면접 유형 (전화, 화상, 대면, 기술면접)
+5. scheduled_at (TIMESTAMP) - 면접 예정 일시
+6. feedback (TEXT) - 면접 피드백 [마스킹: full, null_ratio: 20%]
+7. result (VARCHAR(20)) - 면접 결과 (합격, 불합격, 보류, null_ratio: 15%)
+
+**커뮤니티 댓글:**
+- "면접 유형별 평균 소요 시간 - 전화면접: 30분, 화상면접: 1시간, 대면면접: 1.5시간, 기술면접: 2시간" - 정다은
+- "feedback 컬럼은 민감 정보로 마스킹 처리됩니다. 원본이 필요하면 채용팀장 승인이 필요합니다." - 강현우
+
+#### job_postings (채용 공고)
+- **설명**: 채용 공고 정보
+- **민감도**: public
+- **태그**: hr, recruitment, job
+- **소유자**: HR팀 이민지
+
+**컬럼:** posting_id, title, department, position, salary_min, salary_max, status, posted_at, closed_at
+
+**커뮤니티 댓글:**
+- "채용 공고 상태: draft(작성중), open(진행중), closed(마감), filled(채용완료), cancelled(취소)" - 윤지영
+- "급여 범위는 salary_min, salary_max 컬럼에 있습니다. NULL이면 협의라는 의미입니다." - 임태호
+
+---
+
+### 2.8 hr_prod.hr_schema (운영 HR 데이터 - 3개 테이블)
+
+#### departments (부서)
+- **설명**: 조직 부서 정보를 관리하는 마스터 테이블
+- **민감도**: internal
+- **태그**: hr, organization, department
+- **소유자**: HR System
+
+**컬럼:** dept_id, dept_name, parent_dept_id, manager_id, budget, created_at
+
+#### employee_salaries (급여 지급 실적)
+- **설명**: 운영 DB의 급여 지급 실적 테이블
+- **민감도**: confidential
+- **태그**: hr, payroll, salary
+- **소유자**: HR System
+
+**컬럼 (6개):**
+1. record_id (INTEGER) - 급여 기록 고유 식별자
+2. employee_number (VARCHAR(20)) - 사번 [마스킹: partial]
+3. monthly_salary (DECIMAL(12,2)) - 월 급여 (세전) [마스킹: hash]
+4. tax_deduction (DECIMAL(10,2)) - 세금 공제액 [마스킹: hash]
+5. payment_date (DATE) - 급여 지급일
+6. bank_account (VARCHAR(50)) - 입금 계좌번호 [마스킹: partial]
+
+**커뮤니티 댓글:**
+- "이 테이블은 운영 DB 직접 데이터입니다. 분석용으로는 analytics_db.hr.salaries 사용을 권장합니다." - 한소희
+- "계좌번호는 보안상 해시 마스킹이 적용되어 있습니다. 원본 데이터는 조회 불가합니다." - 송민재
+
+#### employees (직원 - 운영)
+- **설명**: 운영 환경의 직원 마스터 테이블
+- **민감도**: confidential
+- **태그**: hr, employee, master
+- **소유자**: HR System
+
+**컬럼:** emp_id, emp_number, name, email, dept_id, position, hire_date, status, created_at, updated_at
+
+---
+
+### 2.9 product_db.public (상품 데이터 - 3개 테이블)
+
+#### categories (제품 카테고리)
+- **설명**: 상품 카테고리 계층 구조
+- **민감도**: public
+- **태그**: category, taxonomy, 분류
+- **소유자**: Product팀 최서연
+
+**컬럼 (4개):**
+1. category_id (INTEGER) - 카테고리 고유 식별자
+2. category_name (VARCHAR(100)) - 카테고리명
+3. parent_category_id (INTEGER) - 상위 카테고리 ID (계층구조, null_ratio: 40%)
+4. display_order (INTEGER) - 표시 순서
+
+**커뮤니티 댓글:**
+- "카테고리 계층은 parent_category_id로 연결됩니다. NULL이면 최상위 카테고리입니다." - 박준혁
+- "display_order로 정렬하면 프론트엔드 네비게이션 순서와 일치합니다." - 최유진
+
+#### inventory (실시간 재고 현황)
+- **설명**: 상품 재고 현황을 실시간으로 관리
+- **민감도**: internal
+- **태그**: inventory, stock, 재고
+- **소유자**: Operations팀 김태희
+
+**컬럼:** inventory_id, product_id, warehouse_id, quantity, reserved_quantity, last_updated
+
+**커뮤니티 댓글:**
+- "재고 수량 음수는 오발주 또는 시스템 오류입니다. 발견 시 SCM팀에 보고해주세요." - 김민수
+- "reserved_quantity는 결제 완료 전 예약된 수량입니다. available = quantity - reserved_quantity" - 이서연
+
+#### suppliers (공급업체)
+- **설명**: 공급업체(벤더) 정보
+- **민감도**: internal
+- **태그**: supplier, vendor, 공급업체
+- **소유자**: Operations팀 김태희
+
+**컬럼 (6개):**
+1. supplier_id (INTEGER) - 공급업체 고유 식별자
+2. supplier_name (VARCHAR(200)) - 공급업체명
+3. contact_name (VARCHAR(100)) - 담당자 이름 [마스킹: partial, null_ratio: 5%]
+4. contact_email (VARCHAR(255)) - 담당자 이메일 [마스킹: partial, null_ratio: 5%]
+5. phone (VARCHAR(20)) - 대표 전화번호 [마스킹: partial, null_ratio: 10%]
+6. country (VARCHAR(50)) - 소재 국가
+
+**커뮤니티 댓글:**
+- "공급업체 평가 등급은 rating 컬럼에 있습니다. A/B/C/D 등급으로 관리됩니다." - 정다은
+- "담당자 연락처는 개인정보 보호를 위해 부분 마스킹됩니다. 전체 정보는 구매팀 문의하세요." - 강현우
+
+---
+
+### 2.10 sales_db.public (영업 데이터 - 3개 테이블)
+
+#### customers (고객 마스터)
+- **설명**: B2B 고객사 정보
+- **민감도**: internal
+- **태그**: customer, master, 고객
+- **소유자**: Sales팀 박준호
+
+**컬럼:** customer_id, company_name, contact_name, email, phone, credit_rating, status, created_at
+
+**커뮤니티 댓글:**
+- "신용등급은 credit_rating 컬럼입니다. AAA부터 D까지 있으며, 여신 한도 산정에 사용됩니다." - 윤지영
+- "거래처 상태가 inactive인 경우 거래 중단된 업체입니다. 재활성화는 영업팀 승인 필요합니다." - 임태호
+
+#### sales_transactions (영업 거래 내역)
+- **설명**: 매출 거래 내역
+- **민감도**: internal
+- **태그**: sales, transaction, 영업
+- **소유자**: Sales팀 박준호
+
+**컬럼 (7개):**
+1. transaction_id (INTEGER) - 거래 고유 식별자
+2. customer_id (INTEGER) - 고객 외래키
+3. product_id (INTEGER) - 상품 외래키
+4. quantity (INTEGER) - 구매 수량
+5. unit_price (DECIMAL(10,2)) - 단가
+6. total_amount (DECIMAL(12,2)) - 총 거래 금액
+7. transaction_date (TIMESTAMP) - 거래 일시
+
+**커뮤니티 댓글:**
+- "매출 집계 시 반품(return) 거래는 음수 금액으로 기록됩니다. 순매출 계산 시 주의하세요." - 한소희
+- "월말 마감 후에는 거래 수정이 불가합니다. is_finalized=true인 거래는 수정 제한됩니다." - 송민재
+
+#### commissions (영업 커미션)
+- **설명**: 영업사원 수수료 정산 데이터
+- **민감도**: confidential
+- **태그**: commission, incentive, sensitive, 커미션
+- **소유자**: Finance팀 한지민
+
+**컬럼 (6개):**
+1. commission_id (INTEGER) - 수수료 고유 식별자
+2. salesperson_id (INTEGER) - 영업사원 ID
+3. transaction_id (INTEGER) - 매출 거래 외래키
+4. commission_rate (DECIMAL(5,2)) - 수수료율 (%)
+5. commission_amount (DECIMAL(12,2)) - 수수료 금액 [마스킹: partial]
+6. paid_at (TIMESTAMP) - 수수료 지급 일시 (null_ratio: 20%)
+
+**커뮤니티 댓글:**
+- "수수료율은 직급과 상품 카테고리에 따라 다릅니다. commission_policy 테이블에서 정책 확인 가능합니다." - 김민수
+- "paid_at이 NULL이면 아직 지급되지 않은 수수료입니다. 매월 10일에 일괄 지급됩니다." - 이서연
+
+---
+
+## 3. 데이터 리니지 (25개 관계)
+
+### 3.1 HR 계열
+1. employees → salaries (transform)
+   - ETL 로직: "직원 정보를 기반으로 급여 테이블 생성. employee_id를 외래키로 연결하여 급여 이력 관리."
+
+2. employees → performance_reviews (transform)
+   - ETL 로직: "직원별 성과 평가 데이터 생성. employee_id와 reviewer_id 모두 employees 테이블 참조."
+
+3. employees → benefits (transform)
+   - ETL 로직: "직원별 복리후생 정보 관리. employee_id로 연결하여 건강보험, 연금 등 복리후생 항목 추적."
+
+4. applicants → interviews (transform)
+   - ETL 로직: "지원자 정보를 기반으로 면접 일정 생성. applicant_id로 연결하여 면접 진행 상황 추적."
+
+5. interviews → hiring_metrics (aggregate)
+   - ETL 로직: "면접 결과를 집계하여 채용 지표 생성. 월별/부서별 채용 완료 수, 채용 소요 일수 등 계산."
+
+6. job_postings → recruitment_funnel (aggregate)
+   - ETL 로직: "채용 공고별 퍼널 단계 현황 집계. 각 단계(서류심사, 1차면접 등)의 지원자 수와 전환율 계산."
+
+7. applicants → recruitment_funnel (aggregate)
+   - ETL 로직: "지원자 현황을 채용 단계별로 집계. 각 단계의 지원자 수 카운트하여 퍼널 분석 데이터 생성."
+
+### 3.2 DevOps 계열
+8. build_logs → deployments (transform)
+   - ETL 로직: "성공한 빌드를 기반으로 배포 레코드 생성. 빌드 ID를 참조하여 배포 버전 및 이력 관리."
+
+9. service_metrics → alerts (transform)
+   - ETL 로직: "메트릭 임계치 초과 시 알림 생성. CPU, 메모리, 응답시간 등 지표가 설정값 초과 시 알림 발생."
+
+10. alerts → incident_reports (transform)
+    - ETL 로직: "Critical 알림 발생 시 장애 보고서 자동 생성. 알림 정보를 기반으로 초기 보고서 템플릿 작성."
+
+### 3.3 Sales/Product 계열
+11. customers → sales_transactions (transform)
+    - ETL 로직: "고객 정보를 참조하여 매출 거래 생성. customer_id로 연결하여 고객별 거래 이력 추적."
+
+12. sales_transactions → commissions (transform)
+    - ETL 로직: "매출 거래를 기반으로 영업 수수료 산정. 거래 금액 * 수수료율로 수수료 금액 계산."
+
+13. suppliers → inventory (transform)
+    - ETL 로직: "공급업체로부터 입고 시 재고 업데이트. supplier_id로 입고 출처 추적 및 재고 수량 증가."
+
+14. categories → products (transform)
+    - ETL 로직: "카테고리 정보를 상품에 매핑. category_id로 연결하여 상품 분류 체계 관리."
+
+15. products → inventory (transform)
+    - ETL 로직: "상품 마스터를 기반으로 재고 항목 생성. product_id로 연결하여 상품별 재고 현황 관리."
+
+16. inventory → orders (transform)
+    - ETL 로직: "재고 확인 후 주문 처리. 주문 시 가용 재고 검증 및 예약 재고 처리."
+
+17. products → orders (transform)
+    - ETL 로직: "상품 정보를 주문에 포함. product_id로 연결하여 주문 상품 상세 정보 참조."
+
+18. products → reviews (transform)
+    - ETL 로직: "상품별 리뷰 데이터 연결. product_id로 연결하여 상품별 평점 및 리뷰 집계."
+
+### 3.4 Users 계열
+19. users → orders (transform)
+    - ETL 로직: "사용자 정보를 주문에 연결. user_id로 연결하여 주문자 정보 및 배송지 참조."
+
+20. users → reviews (transform)
+    - ETL 로직: "사용자가 작성한 리뷰 연결. user_id로 연결하여 리뷰 작성자 정보 참조."
+
+21. users → user_events (transform)
+    - ETL 로직: "사용자 행동 이벤트 수집. user_id로 연결하여 개별 사용자의 클릭, 조회 등 행동 추적."
+
+### 3.5 크로스 DB 동기화
+22. hr_prod.employee_salaries → analytics_db.salaries (sync)
+    - ETL 로직: "운영 DB 급여 데이터를 분석 DB로 동기화. 일일 배치로 전일 급여 지급 데이터 복제 및 민감정보 마스킹 적용."
+
+23. hr_prod.employees → analytics_db.employees (sync)
+    - ETL 로직: "운영 DB 직원 정보를 분석 DB로 동기화. 실시간 CDC로 변경사항 반영, 개인정보 일부 마스킹."
+
+24. sales_db.customers → analytics_db.users (sync)
+    - ETL 로직: "B2B 고객사 정보를 사용자 테이블과 통합. 고객 유형 구분 컬럼 추가하여 B2B/B2C 통합 분석 지원."
+
+### 3.6 Logs 계열
+25. api_logs → application_logs (aggregate)
+    - ETL 로직: "API 로그의 에러 패턴을 애플리케이션 로그로 집계. 5xx 에러 발생 시 자동으로 에러 로그 생성."
+
+26. payment_logs → security_logs (transform)
+    - ETL 로직: "결제 실패 및 의심 거래를 보안 로그로 전송. 이상 패턴 탐지 시 보안 이벤트 생성."
+
+---
+
+## 4. 권한 시스템
+
+### 4.1 권한 레벨 (3단계)
+- **viewer**: 데이터 조회만 가능
+- **developer**: API 권한 등 개발자 권한
+- **owner**: 데이터에 대한 관리자 권한
+
+### 4.2 샘플 권한 요청 데이터 (6건)
+
+**일반 사용자 (user@example.com) - 3건:**
+
+1. **employees 테이블 조회 권한 요청 (대기 중)**
+   - 요청 레벨: viewer
+   - 목적 카테고리: analysis
+   - 사유: "부서별 인원 분석을 위해 직원 정보가 필요합니다. 이름, 부서, 입사일 등의 기본 정보만 확인하고자 합니다."
+   - 기간: 3개월
+   - 상태: pending (2일 전 요청)
+
+2. **orders 테이블 조회 권한 요청 (대기 중)**
+   - 요청 레벨: viewer
+   - 목적 카테고리: reporting
+   - 사유: "월별 주문 트렌드 리포트 작성을 위해 주문 데이터 조회가 필요합니다."
+   - 기간: 1개월
+   - 상태: pending (1일 전 요청)
+
+3. **products 테이블 개발자 권한 요청 (반려됨)**
+   - 요청 레벨: developer
+   - 목적 카테고리: development
+   - 사유: "개발 테스트를 위해 상품 데이터 수정 권한이 필요합니다."
+   - 기간: permanent
+   - 상태: rejected (5일 전 요청, 4일 전 반려)
+   - 반려 사유: "개발자 권한은 개발팀 소속 직원에게만 부여 가능합니다. 조회 권한으로 재신청해주세요."
+
+**데이터 분석가 (adv@example.com) - 3건:**
+
+4. **salaries 테이블 개발자 권한 요청 (대기 중)**
+   - 요청 레벨: developer
+   - 목적 카테고리: analysis
+   - 사유: "급여 데이터 분석을 위한 집계 쿼리 작성이 필요합니다. 연봉 통계, 부서별 평균 급여 등을 분석하려고 합니다."
+   - 기간: 6개월
+   - 상태: pending (3일 전 요청)
+
+5. **payment_logs 테이블 개발자 권한 요청 (대기 중)**
+   - 요청 레벨: developer
+   - 목적 카테고리: reporting
+   - 사유: "결제 실패율 분석 대시보드를 만들기 위해 결제 로그 데이터가 필요합니다."
+   - 기간: 6개월
+   - 상태: pending (12시간 전 요청)
+
+6. **user_events 테이블 조회 권한 요청 (승인됨)**
+   - 요청 레벨: viewer
+   - 목적 카테고리: analysis
+   - 사유: "사용자 행동 패턴 분석을 위해 이벤트 데이터 조회가 필요합니다."
+   - 기간: 3개월
+   - 상태: approved (7일 전 요청, 6일 전 승인)
+   - 승인 코멘트: "분석 목적으로 승인합니다. 3개월 후 재신청 필요합니다."
+
+---
+
+## 5. RLS (Row Level Security) 정책
+
+### 5.1 모든 테이블 RLS 활성화
+```sql
+ALTER TABLE [table_name] ENABLE ROW LEVEL SECURITY;
+```
+
+### 5.2 기본 정책 패턴
+
+**읽기 정책 (SELECT):**
+```sql
+CREATE POLICY "Authenticated users can read [table]"
+  ON [table] FOR SELECT
+  TO authenticated
+  USING (true);
+```
+
+**쓰기 정책 (INSERT):**
+```sql
+CREATE POLICY "Users can insert their own [table]"
+  ON [table] FOR INSERT
+  TO authenticated
+  WITH CHECK (auth.uid() = user_id);
+```
+
+**수정 정책 (UPDATE):**
+```sql
+CREATE POLICY "Users can update their own [table]"
+  ON [table] FOR UPDATE
+  TO authenticated
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+```
+
+### 5.3 권한 기반 접근 정책 (민감 데이터)
+```sql
+CREATE POLICY "Users with permission can view [table]"
+  ON [schema].[table] FOR SELECT
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM asset_permissions ap
+      JOIN data_assets da ON da.id = ap.asset_id
+      WHERE da.schema_name = '[schema]'
+      AND da.name = '[table]'
+      AND ap.user_id = auth.uid()
+      AND ap.revoked_at IS NULL
+      AND (ap.expires_at IS NULL OR ap.expires_at > now())
+    )
+  );
+```
+
+---
+
+## 6. 인덱스
+
+```sql
+-- data_assets
+CREATE INDEX idx_data_assets_schema ON data_assets(schema_name, database_name);
+CREATE INDEX idx_data_assets_name ON data_assets(name);
+CREATE INDEX idx_data_assets_service ON data_assets(service_id);
+CREATE INDEX idx_data_assets_requires_permission ON data_assets(requires_permission) WHERE requires_permission = true;
+
+-- asset_columns
+CREATE INDEX idx_asset_columns_asset_id ON asset_columns(asset_id);
+
+-- data_lineage
+CREATE INDEX idx_data_lineage_source ON data_lineage(source_asset_id);
+CREATE INDEX idx_data_lineage_target ON data_lineage(target_asset_id);
+
+-- pipelines & requests
+CREATE INDEX idx_pipelines_status ON pipelines(status);
+CREATE INDEX idx_pipeline_requests_status ON pipeline_requests(status);
+
+-- notifications
+CREATE INDEX idx_notifications_user_read ON notifications(user_id, is_read);
+
+-- services
+CREATE INDEX idx_services_name ON services(name);
+```
+
+---
+
+## 7. 사용 예시
+
+### 7.1 데이터 플랫폼 구축 시
+이 프롬프트를 사용하여 다음을 구현할 수 있습니다:
+1. 데이터 카탈로그 시스템
+2. 셀프서비스 데이터 액세스 플랫폼
+3. 데이터 거버넌스 시스템
+4. 데이터 리니지 추적 시스템
+5. 권한 관리 및 승인 워크플로우
+
+### 7.2 주요 특징
+- **32개의 현실적인 데이터 자산**: 다양한 업무 도메인 (HR, Sales, Product, DevOps) 포함
+- **완전한 메타데이터**: 각 테이블마다 컬럼, 비즈니스 정의, 문서 링크, 민감도 레벨 포함
+- **데이터 리니지**: 26개의 상호 연결된 데이터 플로우
+- **커뮤니티 댓글**: 40개 이상의 한국어 댓글로 실제 협업 환경 재현
+- **3단계 권한 시스템**: viewer, developer, owner
+- **6개의 샘플 권한 요청**: pending, approved, rejected 상태 포함
+- **PII 마스킹**: 민감 정보에 대한 3가지 마스킹 타입 (partial, full, hash)
+- **RLS 보안**: 모든 테이블에 Row Level Security 적용
+
+### 7.3 프롬프트 사용법
+
+새 프로젝트를 만들 때 이 문서를 AI에게 제공하면서:
+
+```
+위 DB 구조와 샘플 데이터를 전부 사용하여 Supabase 기반 데이터 플랫폼을 구축해줘.
+모든 테이블, 컬럼, 리니지, 댓글, 권한 데이터를 포함해서 마이그레이션 파일을 생성해줘.
+```
+
+또는 특정 부분만:
+
+```
+위 명세 중에서 HR 관련 테이블(analytics_db.hr, hr_db, hr_prod)과
+관련 리니지, 댓글만 추출해서 구현해줘.
+```

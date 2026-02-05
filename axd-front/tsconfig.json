@@ -1,0 +1,31 @@
+{
+    "include": [
+      "src"
+    ],
+    "exclude": ["node_modules"],
+    "compilerOptions": {
+        "module": "esnext",
+        "moduleResolution": "node",
+        "target": "ESNext",
+        "sourceMap": true,
+        "allowSyntheticDefaultImports": true,
+        "downlevelIteration": true,
+        "skipLibCheck": true,
+        "allowJs": true,
+        "jsx": "react-jsx",
+        "strict": true,
+        "lib": ["DOM", "DOM.Iterable", "ESNext"],
+        "esModuleInterop": true,
+        "resolveJsonModule": true,
+        "forceConsistentCasingInFileNames": true,
+        "noImplicitReturns": true,
+        "types": ["node", "vite/client"],
+        "paths": {
+            "@src/*": ["./src/*"],
+            "@components/*": ["./src/components/*"],
+            "@lib/*": ["./src/lib/*"],
+            "@hooks/*": ["./src/hooks/*"],
+            "@contexts/*": ["./src/contexts/*"]
+        }
+    }
+}

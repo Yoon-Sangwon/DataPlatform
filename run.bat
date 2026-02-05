@@ -1,3 +1,3 @@
 @echo off
-powershell -ExecutionPolicy Bypass -File .un.ps1
+powershell -ExecutionPolicy Bypass -File .\run.ps1
 pause

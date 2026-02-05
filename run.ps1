@@ -17,6 +17,8 @@ do {
     $choice = Read-Host "Select an option"
     switch ($choice) {
         '1' {
+            Write-Host "Cleaning up old containers..." -ForegroundColor Gray
+            docker-compose down
             Write-Host "Building and Starting Docker services..." -ForegroundColor Yellow
             docker-compose up --build -d
             Write-Host "Starting Frontend..." -ForegroundColor Yellow

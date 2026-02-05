@@ -38,6 +38,13 @@ export default defineConfig(async () => {
             host: '0.0.0.0',
             port: 12083,
             strictPort: true,
+            proxy: {
+                '/api': {
+                    target: 'http://localhost:8000',
+                    changeOrigin: true,
+                    secure: false,
+                },
+            },
         },
     };
 });

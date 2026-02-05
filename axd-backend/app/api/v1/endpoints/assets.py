@@ -1,27 +1,37 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from app.db.session import get_db
+from app.database import get_db
 from app.crud.crud_asset import asset as crud_asset
 from app.schemas.asset import AssetResponse
+from app.models.all_models import Service, AssetColumn, DataLineage, AssetComment, DataAsset
 
 router = APIRouter()
+
+@router.get("/services")
+def read_services(db: Session = Depends(get_db)):
+    return db.query(Service).all()
 
 @router.get("/", response_model=List[AssetResponse])
 def read_assets(
     db: Session = Depends(get_db),
     service_id: Optional[str] = None
 ):
-    assets = crud_asset.get_multi(db, service_id=service_id)
+    query = db.query(DataAsset)
+    if service_id:
+        query = query.filter(DataAsset.service_id == service_id)
+    assets = query.all()
     
-    # 마스킹 비즈니스 로직 (HRP 톤앤매너: 명확한 책임 분리)
     result = []
     for a in assets:
         is_masked = a.requires_permission
-        # Schema 모델로 변환 (isMasked 등 추가 필드 처리)
         asset_res = AssetResponse.model_validate(a)
         asset_res.isMasked = is_masked
-        if is_masked:
+        # [데모용] 모든 권한을 True로 설정하여 마스킹 해제 (관리자 계정 시나리오)
+        asset_res.hasPermission = True 
+        
+        # 권한이 없을 때만 이름을 마스킹해야 하는데, 현재는 데모이므로 마스킹 처리 안 함
+        if is_masked and not asset_res.hasPermission:
             asset_res.name = "****"
         result.append(asset_res)
         
@@ -32,39 +42,40 @@ def read_asset(
     asset_id: str,
     db: Session = Depends(get_db)
 ):
-    a = crud_asset.get(db, id=asset_id)
+    a = db.query(DataAsset).filter(DataAsset.id == asset_id).first()
     if not a:
         raise HTTPException(status_code=404, detail="Asset not found")
     
     asset_res = AssetResponse.model_validate(a)
     asset_res.isMasked = a.requires_permission
-    if asset_res.isMasked:
+    # [데모용] 모든 권한을 True로 설정
+    asset_res.hasPermission = True
+    
+    if asset_res.isMasked and not asset_res.hasPermission:
         asset_res.name = "****"
         
     return asset_res
 
-@router.post("/seed")
-def seed_assets(db: Session = Depends(get_db)):
-    from app.models.asset import DataAsset
-    import uuid
+@router.get("/{asset_id}/columns")
+def read_asset_columns(asset_id: str, db: Session = Depends(get_db)):
+    return db.query(AssetColumn).filter(AssetColumn.asset_id == asset_id).order_by(AssetColumn.ordinal_position).all()
+
+@router.get("/{asset_id}/lineage")
+def read_asset_lineage(asset_id: str, db: Session = Depends(get_db)):
+    return db.query(DataLineage).filter(
+        (DataLineage.source_asset_id == asset_id) | (DataLineage.target_asset_id == asset_id)
+    ).all()
+
+@router.get("/{asset_id}/comments")
+def read_asset_comments(asset_id: str, db: Session = Depends(get_db)):
+    return db.query(AssetComment).filter(AssetComment.asset_id == asset_id).all()
+
+@router.get("/{asset_id}/preview")
+def get_asset_preview(asset_id: str, db: Session = Depends(get_db)):
+    from app.models.all_models import SampleData
     
-    if db.query(DataAsset).count() > 0:
-        return {"message": "Data already exists"}
-        
-    sample_data = [
-        DataAsset(
-            id="1", name="users", description="User profile data", 
-            schema_name="public", database_name="prod_db", service_id="svc-1",
-            owner_name="Admin", owner_email="admin@company.com", 
-            tags=["pii", "core"], sensitivity_level="confidential", requires_permission=True
-        ),
-        DataAsset(
-            id="2", name="orders", description="Order transactions", 
-            schema_name="sales", database_name="warehouse_db", service_id="svc-1",
-            owner_name="Sales Team", owner_email="sales@company.com", 
-            tags=["revenue"], sensitivity_level="private", requires_permission=False
-        )
-    ]
-    db.add_all(sample_data)
-    db.commit()
-    return {"message": "Seed data created successfully"}
+    # SampleData 테이블에서 해당 asset_id의 데이터를 조회
+    samples = db.query(SampleData).filter(SampleData.asset_id == asset_id).limit(100).all()
+    
+    # JSON 데이터만 추출하여 리스트로 반환
+    return [s.row_data for s in samples]

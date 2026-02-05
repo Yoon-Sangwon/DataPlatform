@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase, Service } from '../lib/supabase';
+import axios from 'axios';
+import { Service } from '../lib/supabase';
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export function useServices() {
   const [services, setServices] = useState<Service[]>([]);
@@ -9,15 +12,12 @@ export function useServices() {
   const fetchServices = useCallback(async () => {
     try {
       setLoading(true);
-      const { data, error: fetchError } = await supabase
-        .from('services')
-        .select('*')
-        .order('name', { ascending: true });
-
-      if (fetchError) throw fetchError;
-      setServices(data || []);
+      const response = await axios.get<Service[]>(`${API_URL}/api/v1/assets/services`);
+      setServices(response.data);
     } catch (err) {
+      console.error(err);
       setError(err instanceof Error ? err.message : 'An error occurred');
+      setServices([]);
     } finally {
       setLoading(false);
     }

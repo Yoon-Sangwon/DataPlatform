@@ -1,13 +1,33 @@
-import { Users, FileText, MessageSquare, CheckCircle, Clock, TrendingUp, LayoutGrid } from 'lucide-react';
+import { Users, FileText, MessageSquare, CheckCircle, Clock, TrendingUp, LayoutGrid, RotateCcw } from 'lucide-react';
 import { useAdminStats } from '../../hooks/useAdminStats';
 import { Skeleton } from '../ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
 import { PermissionManagement } from './PermissionManagement';
 import { ServiceRequestManagement } from './ServiceRequestManagement';
 import { CommentModeration } from './CommentModeration';
+import { Button } from '../ui/button';
+import { toast } from 'sonner';
+import axios from 'axios';
 
 export function AdminDashboard() {
   const { stats, loading } = useAdminStats();
+
+  const handleResetData = async () => {
+    if (!confirm('정말로 모든 데이터를 초기화하고 샘플 데이터를 다시 생성하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) {
+      return;
+    }
+
+    try {
+      const loadingToast = toast.loading('데이터 초기화 중...');
+      await axios.post('/api/v1/system/init-sample-data');
+      toast.dismiss(loadingToast);
+      toast.success('샘플 데이터가 성공적으로 초기화되었습니다.');
+      window.location.reload();
+    } catch (error) {
+      console.error(error);
+      toast.error('데이터 초기화 실패');
+    }
+  };
 
   const statCards = [
     {
@@ -46,11 +66,17 @@ export function AdminDashboard() {
 
   return (
     <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">관리자 대시보드</h1>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-          데이터 플랫폼 관리 및 모니터링
-        </p>
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">관리자 대시보드</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            데이터 플랫폼 관리 및 모니터링
+          </p>
+        </div>
+        <Button variant="outline" onClick={handleResetData} className="gap-2">
+          <RotateCcw className="w-4 h-4" />
+          데이터 초기화
+        </Button>
       </div>
 
       <Tabs defaultValue="overview" className="space-y-6">

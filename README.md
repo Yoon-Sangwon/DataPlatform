@@ -132,6 +132,5 @@ axd/
 │   │   ├── components/   # UI 컴포넌트
 │   │   └── hooks/        # 데이터 통신 훅
 │   └── vite.config.ts    # Vite 설정 (Proxy 포함)
-├── docker-compose.yml    # Docker 설정 파일
 └── README.md             # 프로젝트 가이드 (현재 파일)
 ```

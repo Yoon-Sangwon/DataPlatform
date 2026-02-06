@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from app.models.asset import DataAsset
+from app.models import DataAsset
 from typing import List, Optional
 
 class CRUDAsset:
